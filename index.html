@@ -124,6 +124,14 @@
             border-radius: 30px;
             margin-right: 10px;
         }
+        #total-duration {
+            font-weight: bold;
+            margin: 15px 0;
+            padding: 8px;
+            background-color: #f0f0f0;
+            border-radius: 4px;
+            border-left: 4px solid #1DB954;
+        }
     </style>
 </head>
 <body>
@@ -154,6 +162,8 @@
             <div id="artists-container">
                 <p>Carregando artistas...</p>
             </div>
+            
+            <div id="total-duration">Tempo total da playlist: 0 min</div>
             
             <div>
                 <input type="text" id="playlist-name" placeholder="Nome da playlist" required>
@@ -187,6 +197,7 @@
         const selectAllButton = document.getElementById('select-all');
         const unselectAllButton = document.getElementById('unselect-all');
         const selectedCountElement = document.getElementById('selected-count');
+        const totalDurationElement = document.getElementById('total-duration');
         const searchInput = document.getElementById('search-input');
         const searchButton = document.getElementById('search-button');
         
@@ -194,9 +205,10 @@
         let accessToken = '';
         let userId = '';
         let savedTracks = [];
-        let artistMap = {}; // id -> { name, trackCount, tracks[] }
+        let artistMap = {}; // id -> { name, trackCount, tracks[], totalDuration }
         let selectedArtists = new Set();
         let filteredArtists = null;
+        let totalDurationMs = 0;
         
         // Função para gerar um estado aleatório para segurança
         function generateRandomState() {
@@ -230,6 +242,32 @@
                     filterArtists();
                 }
             });
+        }
+        
+        // Formatar duração em milissegundos para formato amigável
+        function formatDuration(ms) {
+            const totalSeconds = Math.floor(ms / 1000);
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            
+            if (hours > 0) {
+                return `${hours}h ${minutes}min`;
+            } else {
+                return `${minutes} min`;
+            }
+        }
+        
+        // Atualizar o tempo total da playlist
+        function updateTotalDuration() {
+            totalDurationMs = 0;
+            
+            selectedArtists.forEach(artistId => {
+                if (artistMap[artistId] && artistMap[artistId].totalDuration) {
+                    totalDurationMs += artistMap[artistId].totalDuration;
+                }
+            });
+            
+            totalDurationElement.textContent = `Tempo total da playlist: ${formatDuration(totalDurationMs)}`;
         }
         
         // Obtém os parâmetros de hash da URL
@@ -296,6 +334,8 @@
             showLoading('Buscando suas músicas salvas...');
             savedTracks = [];
             artistMap = {};
+            selectedArtists.clear();
+            totalDurationMs = 0;
             
             try {
                 // Buscar músicas salvas
@@ -321,6 +361,7 @@
                 // Extrair artistas das músicas salvas
                 extractArtists();
                 displayArtists();
+                updateTotalDuration();
                 
                 showSuccess(`${savedTracks.length} músicas encontradas de ${Object.keys(artistMap).length} artistas!`);
             } catch (error) {
@@ -347,7 +388,8 @@
                         artistMap[artist.id] = {
                             name: artist.name,
                             trackCount: 0,
-                            tracks: []
+                            tracks: [],
+                            totalDuration: 0
                         };
                     }
                 });
@@ -364,19 +406,26 @@
             showLoading('Extraindo artistas das músicas...');
             
             savedTracks.forEach(item => {
-                item.track.artists.forEach(artist => {
+                const track = item.track;
+                
+                // Verificar se a música tem duração
+                const duration_ms = track.duration_ms || 0;
+                
+                track.artists.forEach(artist => {
                     if (!artistMap[artist.id]) {
                         artistMap[artist.id] = {
                             name: artist.name,
                             trackCount: 0,
-                            tracks: []
+                            tracks: [],
+                            totalDuration: 0
                         };
                     }
                     
                     // Evitar duplicatas
-                    if (!artistMap[artist.id].tracks.some(t => t.id === item.track.id)) {
-                        artistMap[artist.id].tracks.push(item.track);
+                    if (!artistMap[artist.id].tracks.some(t => t.id === track.id)) {
+                        artistMap[artist.id].tracks.push(track);
                         artistMap[artist.id].trackCount += 1;
+                        artistMap[artist.id].totalDuration += duration_ms;
                     }
                 });
             });
@@ -414,12 +463,16 @@
                         selectedArtists.delete(artistId);
                     }
                     updateSelectedCount();
+                    updateTotalDuration();
                     validateForm();
                 });
                 
                 const label = document.createElement('label');
                 label.htmlFor = `artist-${artistId}`;
-                label.title = `${artistData.name} (${artistData.trackCount} músicas)`;
+                
+                // Incluir informação de duração no tooltip
+                const formattedDuration = formatDuration(artistData.totalDuration);
+                label.title = `${artistData.name} (${artistData.trackCount} músicas, ${formattedDuration})`;
                 label.textContent = `${artistData.name} (${artistData.trackCount})`;
                 
                 artistDiv.appendChild(checkbox);
@@ -428,6 +481,7 @@
             });
             
             updateSelectedCount();
+            updateTotalDuration();
             validateForm();
         }
         
@@ -465,6 +519,7 @@
                 selectedArtists.add(checkbox.value);
             });
             updateSelectedCount();
+            updateTotalDuration();
             validateForm();
         }
         
@@ -476,6 +531,7 @@
             });
             selectedArtists.clear();
             updateSelectedCount();
+            updateTotalDuration();
             validateForm();
         }
         
@@ -511,6 +567,9 @@
                     artistsDescription += ` e outros ${artistNames.length - 5} artistas`;
                 }
                 
+                // Adicionar duração total na descrição
+                const durationText = formatDuration(totalDurationMs);
+                
                 // Criar a playlist
                 const createResponse = await fetch(`https://api.spotify.com/v1/users/${userId}/playlists`, {
                     method: 'POST',
@@ -520,7 +579,7 @@
                     },
                     body: JSON.stringify({
                         name: playlistName,
-                        description: `Playlist com músicas de ${artistsDescription} gerada automaticamente.`,
+                        description: `Playlist com músicas de ${artistsDescription} gerada automaticamente. Duração total: ${durationText}.`,
                         public: false
                     })
                 });
@@ -566,7 +625,7 @@
                     addedCount += batch.length;
                 }
                 
-                showSuccess(`Playlist "${playlistName}" criada com sucesso com ${trackUris.length} músicas! Confira no seu Spotify.`);
+                showSuccess(`Playlist "${playlistName}" criada com sucesso com ${trackUris.length} músicas (${durationText})! Confira no seu Spotify.`);
                 playlistNameInput.value = '';
             } catch (error) {
                 showError('Erro ao criar playlist: ' + error.message);
